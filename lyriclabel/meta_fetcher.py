@@ -8,8 +8,9 @@ from mutagen.mp3 import MP3
 LASTFM_API_KEY = "0526879300a394a39f059a5c1975fc01"
 
 
-def fetch_metadata_from_lastfm(song_name, quiet_mode=False):
-    # Search for the song first using the track.search method
+def fetch_metadata_from_lastfm(song_name, quiet_mode=False, filename=None):
+    print(f"Searching for song: {song_name}")  # Debugging line
+
     search_url = f"http://ws.audioscrobbler.com/2.0/?method=track.search&track={song_name}&api_key={LASTFM_API_KEY}&format=json"
 
     try:
@@ -22,7 +23,6 @@ def fetch_metadata_from_lastfm(song_name, quiet_mode=False):
         if "results" in search_data and "trackmatches" in search_data["results"]:
             tracks = search_data["results"]["trackmatches"]["track"]
             if tracks:
-                # Show the tracks if it's not in quiet mode
                 if not quiet_mode:
                     print(f"Found {len(tracks)} result(s) for '{song_name}':\n")
                     for i, track in enumerate(tracks):
@@ -30,13 +30,10 @@ def fetch_metadata_from_lastfm(song_name, quiet_mode=False):
                             f"{i + 1}. Artist: {track['artist']}, Track: {track['name']}"
                         )
 
-                # Automatically choose the first track if quiet mode is enabled
                 if quiet_mode:
                     track = tracks[0]  # Choose the first result
-                    # Fetch more detailed metadata about the selected track
-                    return fetch_detailed_metadata(track)
+                    return fetch_detailed_metadata(track, filename)
 
-                # Otherwise, ask the user to select a track
                 choice = int(
                     input("\nPlease select the track number (or 0 to cancel): ")
                 )
@@ -44,9 +41,8 @@ def fetch_metadata_from_lastfm(song_name, quiet_mode=False):
                     print("Search cancelled.")
                     return None
                 elif 1 <= choice <= len(tracks):
-                    track = tracks[choice - 1]  # Select the track based on user choice
-                    # Fetch more detailed metadata about the selected track
-                    return fetch_detailed_metadata(track)
+                    track = tracks[choice - 1]
+                    return fetch_detailed_metadata(track, filename)
                 else:
                     print(
                         f"Invalid choice. Please select a number between 1 and {len(tracks)}."
@@ -60,20 +56,17 @@ def fetch_metadata_from_lastfm(song_name, quiet_mode=False):
             return None
 
     except requests.exceptions.RequestException as e:
-        # Handle network errors (e.g., connection issues)
         print(f"Network error occurred: {e}")
         return None
     except ValueError as e:
-        # Handle JSON decoding errors
         print(f"Error decoding the response: {e}")
         return None
     except Exception as e:
-        # Catch any other unexpected errors
         print(f"An unexpected error occurred: {e}")
         return None
 
 
-def fetch_detailed_metadata(track):
+def fetch_detailed_metadata(track, filename=None):
     """Fetch detailed metadata using track.getInfo."""
     track_info_url = f'http://ws.audioscrobbler.com/2.0/?method=track.getInfo&artist={track["artist"]}&track={track["name"]}&api_key={LASTFM_API_KEY}&format=json'
     try:
@@ -102,29 +95,43 @@ def fetch_detailed_metadata(track):
             }
             return metadata
         else:
-            print("Detailed info could not be fetched for the selected track.")
+            print(
+                f"Detailed info could not be fetched for the selected track. (Filename: {filename if filename else 'Unknown'})"
+            )
             return None
     except requests.exceptions.RequestException as e:
         # Handle network errors (e.g., connection issues)
-        print(f"Error fetching detailed info: {e}")
+        print(f"Error fetching detailed info for {filename}: {e}")
         return None
     except KeyError as e:
         # Handle missing key errors
-        print(f"Missing expected metadata field: {e}")
+        print(f"Missing expected metadata field for {filename}: {e}")
         return None
     except Exception as e:
         # Catch any other unexpected errors
-        print(f"An unexpected error occurred while fetching detailed info: {e}")
+        print(
+            f"An unexpected error occurred while fetching detailed info for {filename}: {e}"
+        )
         return None
 
 
 def extract_artist_and_title(filename):
-    """Extract the artist and title from the filename using regex."""
+    """Extract the artist and title from the filename using regex and clean up."""
     # Try to extract artist and title using a common format like "Artist - Title.mp3"
     match = re.match(r"^(.*?)\s*[-–]\s*(.*?)(\.mp3)$", filename, re.IGNORECASE)
     if match:
         artist = match.group(1).strip()
         title = match.group(2).strip()
+
+        # Remove featuring artists and other extraneous details from the title
+        title = re.sub(r"\(feat[^\)]*\)", "", title).strip()  # Remove "(feat. Artist)"
+        title = re.sub(
+            r"\(.*\)", "", title
+        ).strip()  # Remove anything inside parentheses
+        title = re.sub(
+            r"\s+", " ", title
+        )  # Replace multiple spaces with a single space
+
         return artist, title
     else:
         return None, filename.replace(".mp3", "").strip()

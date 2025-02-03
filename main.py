@@ -13,8 +13,10 @@ def process_file(filepath, quiet_mode=False):
     filename = os.path.basename(filepath)
     title = filename.replace(".mp3", "").strip()
 
+    print(f"Extracted title: {title}")  # Debugging line
+
     # Fetch metadata for the song using only the title
-    metadata = fetch_metadata_from_lastfm(title, quiet_mode)
+    metadata = fetch_metadata_from_lastfm(title, quiet_mode, filename)
 
     if metadata:
         # Embed metadata into the song file
