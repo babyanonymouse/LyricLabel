@@ -7,7 +7,7 @@ A simple program that embeds audio metadata in an audio file. This program is wr
 1. Clone the repository
 
 ```bash
-git clone https://github.com/babyanonymoouse/LyricLabel.git
+git clone https://github.com/babyanonymouse/LyricLabel.git
 ```
 
 2. Install the required libraries
@@ -20,5 +20,5 @@ pip install -r requirements.txt
 
 ```bash
 python -m venv venv
-source venv/bin/activate
+source .venv/bin/activate
 ```
