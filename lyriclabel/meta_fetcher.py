@@ -8,7 +8,7 @@ from mutagen.mp3 import MP3
 LASTFM_API_KEY = "0526879300a394a39f059a5c1975fc01"
 
 
-def fetch_metadata_from_lastfm(song_name):
+def fetch_metadata_from_lastfm(song_name, quiet_mode=False):
     # Search for the song first using the track.search method
     search_url = f"http://ws.audioscrobbler.com/2.0/?method=track.search&track={song_name}&api_key={LASTFM_API_KEY}&format=json"
 
@@ -22,32 +22,36 @@ def fetch_metadata_from_lastfm(song_name):
         if "results" in search_data and "trackmatches" in search_data["results"]:
             tracks = search_data["results"]["trackmatches"]["track"]
             if tracks:
-                # If there are multiple results, show them to the user
-                print(f"Found {len(tracks)} result(s) for '{song_name}':\n")
-                for i, track in enumerate(tracks):
-                    print(f"{i + 1}. Artist: {track['artist']}, Track: {track['name']}")
-
-                # Ask the user to select which track they want
-                while True:
-                    try:
-                        choice = int(
-                            input("\nPlease select the track number (or 0 to cancel): ")
+                # Show the tracks if it's not in quiet mode
+                if not quiet_mode:
+                    print(f"Found {len(tracks)} result(s) for '{song_name}':\n")
+                    for i, track in enumerate(tracks):
+                        print(
+                            f"{i + 1}. Artist: {track['artist']}, Track: {track['name']}"
                         )
-                        if choice == 0:
-                            print("Search cancelled.")
-                            return None  # If they cancel, return None
-                        elif 1 <= choice <= len(tracks):
-                            track = tracks[
-                                choice - 1
-                            ]  # Select the track based on user choice
-                            # Fetch more detailed metadata about the selected track
-                            return fetch_detailed_metadata(track)
-                        else:
-                            print(
-                                f"Invalid choice. Please select a number between 1 and {len(tracks)}."
-                            )
-                    except ValueError:
-                        print("Invalid input. Please enter a valid number.")
+
+                # Automatically choose the first track if quiet mode is enabled
+                if quiet_mode:
+                    track = tracks[0]  # Choose the first result
+                    # Fetch more detailed metadata about the selected track
+                    return fetch_detailed_metadata(track)
+
+                # Otherwise, ask the user to select a track
+                choice = int(
+                    input("\nPlease select the track number (or 0 to cancel): ")
+                )
+                if choice == 0:
+                    print("Search cancelled.")
+                    return None
+                elif 1 <= choice <= len(tracks):
+                    track = tracks[choice - 1]  # Select the track based on user choice
+                    # Fetch more detailed metadata about the selected track
+                    return fetch_detailed_metadata(track)
+                else:
+                    print(
+                        f"Invalid choice. Please select a number between 1 and {len(tracks)}."
+                    )
+                    return None
             else:
                 print(f"No matching tracks found for: {song_name}")
                 return None
