@@ -8,7 +8,9 @@ from mutagen.mp3 import MP3
 LASTFM_API_KEY = "0526879300a394a39f059a5c1975fc01"
 
 
-def fetch_metadata_from_lastfm(song_name, quiet_mode=False, filename=None):
+def fetch_metadata_from_lastfm(
+    song_name, quiet_mode=False, filename=None, error_list=None
+):
     print(f"Searching for song: {song_name}")  # Debugging line
 
     search_url = f"http://ws.audioscrobbler.com/2.0/?method=track.search&track={song_name}&api_key={LASTFM_API_KEY}&format=json"
@@ -32,41 +34,39 @@ def fetch_metadata_from_lastfm(song_name, quiet_mode=False, filename=None):
 
                 if quiet_mode:
                     track = tracks[0]  # Choose the first result
-                    return fetch_detailed_metadata(track, filename)
+                    return fetch_detailed_metadata(track, filename, error_list)
 
                 choice = int(
                     input("\nPlease select the track number (or 0 to cancel): ")
                 )
                 if choice == 0:
-                    print("Search cancelled.")
+                    error_list.append(f"Search cancelled for '{song_name}'.")
                     return None
                 elif 1 <= choice <= len(tracks):
                     track = tracks[choice - 1]
-                    return fetch_detailed_metadata(track, filename)
+                    return fetch_detailed_metadata(track, filename, error_list)
                 else:
-                    print(
-                        f"Invalid choice. Please select a number between 1 and {len(tracks)}."
-                    )
+                    error_list.append(f"Invalid choice for '{song_name}'.")
                     return None
             else:
-                print(f"No matching tracks found for: {song_name}")
+                error_list.append(f"No matching tracks found for '{song_name}'.")
                 return None
         else:
-            print(f"No results found for song: {song_name}")
+            error_list.append(f"No results found for song: '{song_name}'.")
             return None
 
     except requests.exceptions.RequestException as e:
-        print(f"Network error occurred: {e}")
+        error_list.append(f"Network error occurred for '{song_name}': {e}")
         return None
     except ValueError as e:
-        print(f"Error decoding the response: {e}")
+        error_list.append(f"Error decoding the response for '{song_name}': {e}")
         return None
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        error_list.append(f"An unexpected error occurred for '{song_name}': {e}")
         return None
 
 
-def fetch_detailed_metadata(track, filename=None):
+def fetch_detailed_metadata(track, filename=None, error_list=None):
     """Fetch detailed metadata using track.getInfo."""
     track_info_url = f'http://ws.audioscrobbler.com/2.0/?method=track.getInfo&artist={track["artist"]}&track={track["name"]}&api_key={LASTFM_API_KEY}&format=json'
     try:
@@ -95,22 +95,17 @@ def fetch_detailed_metadata(track, filename=None):
             }
             return metadata
         else:
-            print(
-                f"Detailed info could not be fetched for the selected track. (Filename: {filename if filename else 'Unknown'})"
-            )
+            error_list.append(f"Detailed info could not be fetched for {filename}")
             return None
     except requests.exceptions.RequestException as e:
-        # Handle network errors (e.g., connection issues)
-        print(f"Error fetching detailed info for {filename}: {e}")
+        error_list.append(f"Error fetching detailed info for '{filename}': {e}")
         return None
     except KeyError as e:
-        # Handle missing key errors
-        print(f"Missing expected metadata field for {filename}: {e}")
+        error_list.append(f"Missing expected metadata field for '{filename}': {e}")
         return None
     except Exception as e:
-        # Catch any other unexpected errors
-        print(
-            f"An unexpected error occurred while fetching detailed info for {filename}: {e}"
+        error_list.append(
+            f"An unexpected error occurred while fetching detailed info for '{filename}': {e}"
         )
         return None
 
