@@ -1,6 +1,8 @@
 import requests
 import os
 import re
+from mutagen.easyid3 import EasyID3
+from mutagen.mp3 import MP3
 
 # Replace with your own Last.fm API key
 LASTFM_API_KEY = "0526879300a394a39f059a5c1975fc01"
@@ -35,11 +37,15 @@ def fetch_metadata_from_lastfm(song_name):
                             print("Search cancelled.")
                             return None  # If they cancel, return None
                         elif 1 <= choice <= len(tracks):
-                            track = tracks[choice - 1]  # Select the track based on user choice
+                            track = tracks[
+                                choice - 1
+                            ]  # Select the track based on user choice
                             # Fetch more detailed metadata about the selected track
                             return fetch_detailed_metadata(track)
                         else:
-                            print(f"Invalid choice. Please select a number between 1 and {len(tracks)}.")
+                            print(
+                                f"Invalid choice. Please select a number between 1 and {len(tracks)}."
+                            )
                     except ValueError:
                         print("Invalid input. Please enter a valid number.")
             else:
@@ -86,7 +92,9 @@ def fetch_detailed_metadata(track):
                     .get("tag", [{}])[0]
                     .get("name", "Unknown")
                 ),
-                "year": track_details.get("release_date", "Unknown")[:4],  # Extracting the year correctly
+                "year": track_details.get("release_date", "Unknown")[
+                    :4
+                ],  # Extracting the year correctly
             }
             return metadata
         else:
@@ -119,14 +127,24 @@ def extract_artist_and_title(filename):
 
 
 def update_metadata(song_path, metadata):
-    """Update the metadata of the file with the fetched metadata."""
-    # Here you can implement the logic to update the file's metadata
-    print(f"Updating metadata for '{song_path}' with the following information:")
-    print(f"Artist: {metadata['artist']}")
-    print(f"Album: {metadata['album']}")
-    print(f"Track: {metadata['track']}")
-    print(f"Genre: {metadata['genre']}")
-    print(f"Year: {metadata['year']}")
+    """Update the metadata of the MP3 file using Mutagen."""
+    try:
+        # Load the MP3 file and ensure it has ID3 tags
+        audio = MP3(song_path, ID3=EasyID3)
+
+        # Update metadata fields
+        audio["artist"] = metadata["artist"]
+        audio["album"] = metadata["album"]
+        audio["title"] = metadata["track"]
+        audio["genre"] = metadata["genre"]
+        audio["date"] = metadata["year"]
+
+        # Save changes to the file
+        audio.save()
+        print(f"Metadata updated successfully for '{song_path}'.")
+
+    except Exception as e:
+        print(f"Error updating metadata: {e}")
 
 
 def main():
