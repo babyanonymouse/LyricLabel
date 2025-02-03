@@ -3,9 +3,11 @@ import os
 import re
 from mutagen.easyid3 import EasyID3
 from mutagen.mp3 import MP3
+from dotenv import load_dotenv
+load_dotenv()
 
 # Replace with your own Last.fm API key
-LASTFM_API_KEY = "0526879300a394a39f059a5c1975fc01"
+LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
 
 
 def fetch_metadata_from_lastfm(
