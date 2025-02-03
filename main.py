@@ -4,34 +4,12 @@ from lyriclabel.meta_fetcher import fetch_metadata_from_lastfm
 from lyriclabel.meta_edit import edit_metadata
 
 
-def is_valid_audio_file(filepath):
-    """Check if the given path is a valid audio file."""
-    if not os.path.isfile(filepath):  # Check if file exists
-        print(f"Error: File '{filepath}' not found.")
-        return False
-
-    if not filepath.lower().endswith((".mp3", ".flac", ".wav")):  # Check format
-        print(
-            f"Error: Unsupported file format for '{filepath}'. Supported formats: MP3, FLAC, WAV."
-        )
-        return False
-
-    return True
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="LyricLabel: Fetch and edit song metadata."
-    )
-    parser.add_argument("filepath", help="Path to the song file or folder")
-    args = parser.parse_args()
-
-    # Convert relative path to absolute path
-    absolute_path = os.path.abspath(args.filepath)
-    print(f"Processing file: {absolute_path}")
+def process_file(filepath):
+    """Process a single file: fetch metadata and update it."""
+    print(f"Processing file: {filepath}")
 
     # Extract title from the filename (we don't need the full path, just the filename)
-    filename = os.path.basename(absolute_path)
+    filename = os.path.basename(filepath)
     title = filename.replace(".mp3", "").strip()
 
     # Fetch metadata for the song using only the title
@@ -39,10 +17,37 @@ def main():
 
     if metadata:
         # Embed metadata into the song file
-        edit_metadata(absolute_path, metadata)
-        print("Metadata successfully added to the song file.")
+        edit_metadata(filepath, metadata)
+        print(f"Metadata successfully added to '{filepath}'.")
     else:
-        print("Metadata could not be fetched.")
+        print(f"Metadata could not be fetched for '{filepath}'.")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="LyricLabel: Fetch and edit song metadata."
+    )
+    parser.add_argument("path", help="Path to the song file or folder")
+    args = parser.parse_args()
+
+    # Get absolute path
+    absolute_path = os.path.abspath(args.path)
+
+    # If it's a directory, process all mp3 files in it
+    if os.path.isdir(absolute_path):
+        print(f"Processing all mp3 files in directory: {absolute_path}")
+        for root, dirs, files in os.walk(absolute_path):
+            for file in files:
+                if file.lower().endswith(".mp3"):
+                    file_path = os.path.join(root, file)
+                    process_file(file_path)
+
+    # If it's a file, process it directly
+    elif os.path.isfile(absolute_path):
+        process_file(absolute_path)
+
+    else:
+        print(f"The path '{absolute_path}' is not a valid file or directory.")
 
 
 if __name__ == "__main__":
