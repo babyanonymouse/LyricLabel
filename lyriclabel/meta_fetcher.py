@@ -8,6 +8,8 @@ from typing import Any, cast
 import aiohttp
 from dotenv import load_dotenv
 
+from lyriclabel.parser import ParsedFilename
+
 load_dotenv()
 
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
@@ -149,7 +151,7 @@ async def fetch_detailed_metadata_async(
 
 async def fetch_metadata_from_lastfm_async(
     session: aiohttp.ClientSession,
-    song_name: str,
+    parsed: ParsedFilename,
     quiet_mode: bool = False,
     filename: str | None = None,
     error_list: list[str] | None = None,
@@ -165,28 +167,35 @@ async def fetch_metadata_from_lastfm_async(
         return None
 
     if not quiet_mode:
-        print(f"Searching for song: {song_name}")
+        if parsed.artist:
+            print(
+                f"Searching for song: {parsed.search_title} (artist hint: {parsed.artist})"
+            )
+        else:
+            print(f"Searching for song: {parsed.search_title}")
 
     params = {
         "method": "track.search",
-        "track": song_name,
+        "track": parsed.search_title,
         "api_key": LASTFM_API_KEY,
         "format": "json",
     }
+    if parsed.artist:
+        params["artist"] = parsed.artist
 
     try:
         search_data = await _request_json(session, params, max_retries=max_retries)
     except Exception as exc:
-        error_list.append(f"Network error occurred for '{song_name}': {exc}")
+        error_list.append(f"Network error occurred for '{parsed.raw_filename}': {exc}")
         return None
 
     tracks = _coerce_tracks(search_data)
     if not tracks:
-        error_list.append(f"No matching tracks found for '{song_name}'.")
+        error_list.append(f"No matching tracks found for '{parsed.raw_filename}'.")
         return None
 
     if not quiet_mode:
-        print(f"Found {len(tracks)} result(s) for '{song_name}':\n")
+        print(f"Found {len(tracks)} result(s) for '{parsed.raw_filename}':\n")
         for i, track in enumerate(tracks[:10], start=1):
             artist = track.get("artist", "Unknown")
             name = track.get("name", "Unknown")
@@ -197,15 +206,15 @@ async def fetch_metadata_from_lastfm_async(
         try:
             choice = int(input("\nPlease select the track number (or 0 to cancel): "))
             if choice == 0:
-                error_list.append(f"Search cancelled for '{song_name}'.")
+                error_list.append(f"Search cancelled for '{parsed.raw_filename}'.")
                 return None
             if 1 <= choice <= len(tracks):
                 selected_track = tracks[choice - 1]
             else:
-                error_list.append(f"Invalid choice for '{song_name}'.")
+                error_list.append(f"Invalid choice for '{parsed.raw_filename}'.")
                 return None
         except ValueError:
-            error_list.append(f"Invalid choice for '{song_name}'.")
+            error_list.append(f"Invalid choice for '{parsed.raw_filename}'.")
             return None
 
     return await fetch_detailed_metadata_async(

@@ -4,6 +4,7 @@ import os
 
 from lyriclabel.meta_edit import edit_metadata
 from lyriclabel.meta_fetcher import create_lastfm_session, fetch_metadata_from_lastfm_async
+from lyriclabel.parser import parse_filename
 
 
 def _discover_mp3_files(path: str) -> list[str]:
@@ -32,14 +33,14 @@ async def process_file(
 
         # Extract title from the filename (we only need the basename).
         filename = os.path.basename(filepath)
-        title = filename.replace(".mp3", "").strip()
+        parsed = parse_filename(filename)
 
         if error_list is None:
             error_list = []
 
         metadata = await fetch_metadata_from_lastfm_async(
             session,
-            title,
+            parsed,
             quiet_mode,
             filename,
             error_list,
@@ -47,6 +48,8 @@ async def process_file(
         )
 
         if metadata:
+            # Keep the display title from the filename while using cleaned search terms.
+            metadata["track"] = parsed.title
             # Mutagen writes are blocking; run on a thread to avoid stalling the event loop.
             await asyncio.to_thread(edit_metadata, filepath, metadata)
             if not quiet_mode:
