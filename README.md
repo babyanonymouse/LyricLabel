@@ -18,12 +18,46 @@ LyricLabel is a Python command-line tool for fetching and embedding song metadat
 
 To use LyricLabel, you will need:
 
-- Python 3.x
+- Python 3.10+
 - `requests` (for fetching metadata from Last.fm)
 - `mutagen` (for editing MP3 metadata)
 - `python-dotenv` (for securely storing your API keys)
 
-Activate virtual .venv:
+Create and activate a virtual environment with uv:
+
+- Linux/macOS:
+
+```bash
+uv venv
+source .venv/bin/activate
+```
+
+- Windows:
+
+```bash
+uv venv
+.venv\Scripts\activate
+```
+
+Install dependencies with uv:
+
+```bash
+uv sync
+```
+
+Install with development tools (ruff and mypy):
+
+```bash
+uv sync --dev
+```
+
+If uv is not available, install it first:
+
+```bash
+pip install uv
+```
+
+Legacy venv flow (without uv):
 
 - Linux/macOS:
 
@@ -42,7 +76,7 @@ python -m venv .venv
 Then install the dependencies using pip
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ---
@@ -65,7 +99,7 @@ LASTFM_API_KEY=your_api_key_here
 Run the following command to install the required Python libraries:
 
 ```bash
-pip install python-dotenv requests mutagen
+uv sync
 ```
 
 ---
@@ -74,12 +108,26 @@ pip install python-dotenv requests mutagen
 
 You can run the program in the following ways:
 
+### Installed CLI Command (Recommended)
+
+After installation, use the global script entrypoint:
+
+```bash
+lyriclabel <path_to_file_or_directory>
+```
+
+Quiet mode:
+
+```bash
+lyriclabel <path_to_file_or_directory> --quiet
+```
+
 ### Process a Single File
 
 To process a single MP3 file and embed metadata:
 
 ```bash
-python main.py <path_to_file>
+python -m lyriclabel.main <path_to_file>
 ```
 
 ### Process All MP3 Files in a Directory
@@ -87,7 +135,7 @@ python main.py <path_to_file>
 To process all MP3 files in a directory:
 
 ```bash
-python main.py <path_to_directory>
+python -m lyriclabel.main <path_to_directory>
 ```
 
 ### Quiet Mode
@@ -95,14 +143,28 @@ python main.py <path_to_directory>
 If you want to suppress non-essential output (e.g., prompts or debug information), you can enable **quiet mode** by adding the `--quiet` flag:
 
 ```bash
-python main.py <path_to_file_or_directory> --quiet
+python -m lyriclabel.main <path_to_file_or_directory> --quiet
+```
+
+### Dev Quality Commands
+
+Run lint checks:
+
+```bash
+uv run ruff check .
+```
+
+Run type checks:
+
+```bash
+uv run mypy .
 ```
 
 ---
 
 ## How It Works
 
-### `main.py`
+### `lyriclabel/main.py`
 
 - The main script where all file processing begins.
 - It accepts either a file path or a directory path as input.
@@ -143,7 +205,8 @@ If you want to contribute to the project, feel free to fork the repository, make
 ## Troubleshooting
 
 - **API Key Error**: Ensure that you have set the `LASTFM_API_KEY` in the `.env` file.
-- **Missing Modules**: Make sure to install the required dependencies using `pip install -r requirements.txt`.
+- **Missing Modules**: Make sure dependencies are installed with `uv sync` (or `pip install -e .`).
+- **VS Code Interpreter**: On Ubuntu and other Linux systems, point VS Code to `.venv/bin/python` created by `uv venv` for correct IntelliSense and imports.
 
 ---
 
