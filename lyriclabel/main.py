@@ -72,17 +72,22 @@ async def run_async(
                 print(f"Processing all mp3 files in directory: {absolute_path}")
 
             file_paths = _discover_mp3_files(absolute_path)
-            async with asyncio.TaskGroup() as task_group:
-                for file_path in file_paths:
-                    task_group.create_task(
-                        process_file(
-                            file_path,
-                            quiet_mode=quiet_mode,
-                            error_list=error_list,
-                            semaphore=semaphore,
-                            interactive_select=False,
-                            session=session,
-                        )
+            tasks = [
+                process_file(
+                    file_path,
+                    quiet_mode=quiet_mode,
+                    error_list=error_list,
+                    semaphore=semaphore,
+                    interactive_select=False,
+                    session=session,
+                )
+                for file_path in file_paths
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    error_list.append(
+                        f"Unexpected async processing error: {type(result).__name__}: {result}"
                     )
             return 0, error_list
 

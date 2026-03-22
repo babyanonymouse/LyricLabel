@@ -3,6 +3,7 @@ import os
 import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import aiohttp
 from dotenv import load_dotenv
@@ -32,7 +33,7 @@ async def _request_json(
     params: dict[str, str],
     *,
     max_retries: int = DEFAULT_MAX_RETRIES,
-) -> dict:
+) -> dict[str, Any]:
     for attempt in range(max_retries + 1):
         try:
             async with session.get(LASTFM_BASE_URL, params=params) as response:
@@ -51,7 +52,10 @@ async def _request_json(
                     continue
 
                 response.raise_for_status()
-                return await response.json(content_type=None)
+                payload = await response.json(content_type=None)
+                if not isinstance(payload, dict):
+                    raise ValueError("Unexpected non-dict JSON payload from Last.fm")
+                return cast(dict[str, Any], payload)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             if attempt >= max_retries:
                 raise
