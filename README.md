@@ -18,12 +18,46 @@ LyricLabel is a Python command-line tool for fetching and embedding song metadat
 
 To use LyricLabel, you will need:
 
-- Python 3.x
-- `requests` (for fetching metadata from Last.fm)
+- Python 3.10+
+- `aiohttp` (for async metadata fetching from Last.fm)
 - `mutagen` (for editing MP3 metadata)
 - `python-dotenv` (for securely storing your API keys)
 
-Activate virtual .venv:
+Create and activate a virtual environment with uv:
+
+- Linux/macOS:
+
+```bash
+uv venv
+source .venv/bin/activate
+```
+
+- Windows:
+
+```bash
+uv venv
+.venv\Scripts\activate
+```
+
+Install dependencies with uv:
+
+```bash
+uv sync
+```
+
+Install with development tools (ruff and mypy):
+
+```bash
+uv sync --dev
+```
+
+If uv is not available, install it first:
+
+```bash
+pip install uv
+```
+
+Legacy venv flow (without uv):
 
 - Linux/macOS:
 
@@ -42,7 +76,7 @@ python -m venv .venv
 Then install the dependencies using pip
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ---
@@ -65,7 +99,7 @@ LASTFM_API_KEY=your_api_key_here
 Run the following command to install the required Python libraries:
 
 ```bash
-pip install python-dotenv requests mutagen
+uv sync
 ```
 
 ---
@@ -74,12 +108,44 @@ pip install python-dotenv requests mutagen
 
 You can run the program in the following ways:
 
+### Installed CLI Command (Recommended)
+
+After installation, use the global script entrypoint:
+
+```bash
+lyriclabel <path_to_file_or_directory>
+```
+
+Quiet mode:
+
+```bash
+lyriclabel <path_to_file_or_directory> --quiet
+```
+
+Tune concurrency (default is 5):
+
+```bash
+lyriclabel <path_to_file_or_directory> --concurrency 5
+```
+
+Dry-run preview (no file writes):
+
+```bash
+lyriclabel <path_to_file_or_directory> --dry-run
+```
+
+Override log file location:
+
+```bash
+lyriclabel <path_to_file_or_directory> --log-file /tmp/lyriclabel.log
+```
+
 ### Process a Single File
 
 To process a single MP3 file and embed metadata:
 
 ```bash
-python main.py <path_to_file>
+python -m lyriclabel.main <path_to_file>
 ```
 
 ### Process All MP3 Files in a Directory
@@ -87,7 +153,7 @@ python main.py <path_to_file>
 To process all MP3 files in a directory:
 
 ```bash
-python main.py <path_to_directory>
+python -m lyriclabel.main <path_to_directory>
 ```
 
 ### Quiet Mode
@@ -95,14 +161,44 @@ python main.py <path_to_directory>
 If you want to suppress non-essential output (e.g., prompts or debug information), you can enable **quiet mode** by adding the `--quiet` flag:
 
 ```bash
-python main.py <path_to_file_or_directory> --quiet
+python -m lyriclabel.main <path_to_file_or_directory> --quiet
+```
+
+### Dev Quality Commands
+
+Run lint checks:
+
+```bash
+uv run ruff check .
+```
+
+Run type checks:
+
+```bash
+uv run mypy .
+```
+
+### Logging
+
+- Console logs are human-readable.
+- File logs are JSON lines for easy post-run analysis (`jq`, grep, etc.).
+- Quiet mode lowers console noise to warnings/errors only, while file logs remain verbose.
+- Default log file location follows XDG state conventions on Linux:
+	- `~/.local/state/lyriclabel/logs/lyriclabel.log`
+- Dry runs emit `[DRY RUN]` per-field delta messages (old -> new) and include structured fields like `dry_run` and `planned_changes` in JSON logs.
+- End-of-run summary includes `would_have_updated` for dry-run auditing.
+
+Example pre-flight report with jq:
+
+```bash
+jq 'select(.dry_run == true and .planned_changes != null) | {file: .file_path, planned_changes: .planned_changes}' ~/.local/state/lyriclabel/logs/lyriclabel.log
 ```
 
 ---
 
 ## How It Works
 
-### `main.py`
+### `lyriclabel/main.py`
 
 - The main script where all file processing begins.
 - It accepts either a file path or a directory path as input.
@@ -111,9 +207,10 @@ python main.py <path_to_file_or_directory> --quiet
 ### `meta_fetcher.py`
 
 - This file contains functions for interacting with the **Last.fm API** to fetch song metadata.
-- `fetch_metadata_from_lastfm`: Retrieves metadata based on the song title and artist.
-- `fetch_detailed_metadata`: Fetches detailed metadata such as genre, year, and album information.
+- `fetch_metadata_from_lastfm_async`: Retrieves metadata based on the song title and artist.
+- `fetch_detailed_metadata_async`: Fetches detailed metadata such as genre, year, and album information.
 - **Important**: The Last.fm API key is stored in an environment variable for security.
+- Uses one shared `aiohttp` session per run, with retries and 429-aware backoff.
 
 ### `meta_edit.py`
 
@@ -143,7 +240,8 @@ If you want to contribute to the project, feel free to fork the repository, make
 ## Troubleshooting
 
 - **API Key Error**: Ensure that you have set the `LASTFM_API_KEY` in the `.env` file.
-- **Missing Modules**: Make sure to install the required dependencies using `pip install -r requirements.txt`.
+- **Missing Modules**: Make sure dependencies are installed with `uv sync` (or `pip install -e .`).
+- **VS Code Interpreter**: On Ubuntu and other Linux systems, point VS Code to `.venv/bin/python` created by `uv venv` for correct IntelliSense and imports.
 
 ---
 
@@ -151,5 +249,7 @@ If you want to contribute to the project, feel free to fork the repository, make
 
 - **Security**: Always keep your API key private. Never commit it to a public repository.
 - **Performance**: If processing a large number of files, it may take some time depending on the number of API requests.
+- **Concurrency**: Lower `--concurrency` if you hit API rate limits or run on a constrained network.
+- **Logs**: Inspect JSON logs to audit retries, rate limits, and per-file failures.
 
 ---

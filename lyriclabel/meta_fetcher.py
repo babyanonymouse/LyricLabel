@@ -1,184 +1,265 @@
-import requests
+import asyncio
 import os
-import re
-from mutagen.easyid3 import EasyID3
-from mutagen.mp3 import MP3
+import random
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any, cast
+
+import aiohttp
 from dotenv import load_dotenv
+
+from lyriclabel.logging_config import get_logger
+from lyriclabel.parser import ParsedFilename
+
 load_dotenv()
 
-# Replace with your own Last.fm API key
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
+LASTFM_BASE_URL = "https://ws.audioscrobbler.com/2.0/"
+DEFAULT_USER_AGENT = "LyricLabel/0.1 (+https://codex.atlassian.net)"
+DEFAULT_TIMEOUT_SECONDS = 20
+DEFAULT_MAX_RETRIES = 4
+
+logger = get_logger("fetcher")
 
 
-def fetch_metadata_from_lastfm(
-    song_name, quiet_mode=False, filename=None, error_list=None
-):
-    print(f"Searching for song: {song_name}")  # Debugging line
+@asynccontextmanager
+async def create_lastfm_session(
+    user_agent: str = DEFAULT_USER_AGENT,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+) -> AsyncIterator[aiohttp.ClientSession]:
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    headers = {"User-Agent": user_agent}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        yield session
 
-    search_url = f"http://ws.audioscrobbler.com/2.0/?method=track.search&track={song_name}&api_key={LASTFM_API_KEY}&format=json"
+
+async def _request_json(
+    session: aiohttp.ClientSession,
+    params: dict[str, str],
+    *,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    for attempt in range(max_retries + 1):
+        try:
+            async with session.get(LASTFM_BASE_URL, params=params) as response:
+                if response.status == 429 and attempt < max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after is not None:
+                        sleep_seconds = float(retry_after)
+                    else:
+                        # Exponential backoff with jitter for rate limit bursts.
+                        sleep_seconds = (2 ** attempt) + random.uniform(0, 0.25)
+                    logger.warning(
+                        "lastfm rate limited, backing off",
+                        extra={"attempt": attempt + 1, "sleep_seconds": sleep_seconds},
+                    )
+                    await asyncio.sleep(sleep_seconds)
+                    continue
+
+                if response.status >= 500 and attempt < max_retries:
+                    logger.warning(
+                        "lastfm server error, retrying",
+                        extra={"status": response.status, "attempt": attempt + 1},
+                    )
+                    await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.25))
+                    continue
+
+                response.raise_for_status()
+                payload = await response.json(content_type=None)
+                if not isinstance(payload, dict):
+                    raise ValueError("Unexpected non-dict JSON payload from Last.fm")
+                return cast(dict[str, Any], payload)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            if attempt >= max_retries:
+                raise
+            logger.warning("request failed, retrying", extra={"attempt": attempt + 1})
+            await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.25))
+
+    raise RuntimeError("Failed to get JSON response from Last.fm")
+
+
+def _coerce_tracks(search_data: dict) -> list[dict]:
+    tracks = search_data.get("results", {}).get("trackmatches", {}).get("track", [])
+    if isinstance(tracks, dict):
+        return [tracks]
+    if isinstance(tracks, list):
+        return [track for track in tracks if isinstance(track, dict)]
+    return []
+
+
+def _extract_year(track_details: dict) -> str:
+    release_date = str(track_details.get("release_date", "")).strip()
+    if len(release_date) >= 4 and release_date[:4].isdigit():
+        return release_date[:4]
+
+    published = str(track_details.get("wiki", {}).get("published", "")).strip()
+    if len(published) >= 4 and published[:4].isdigit():
+        return published[:4]
+    return "Unknown"
+
+
+def _extract_genre(track_details: dict) -> str:
+    tags = track_details.get("toptags", {}).get("tag", [])
+    if isinstance(tags, dict):
+        tags = [tags]
+    if not isinstance(tags, list) or not tags:
+        return "Unknown"
+    first_tag = tags[0]
+    if not isinstance(first_tag, dict):
+        return "Unknown"
+    return str(first_tag.get("name", "Unknown"))
+
+
+async def fetch_detailed_metadata_async(
+    session: aiohttp.ClientSession,
+    track: dict,
+    filename: str | None = None,
+    error_list: list[str] | None = None,
+    *,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict | None:
+    if error_list is None:
+        error_list = []
+
+    params = {
+        "method": "track.getInfo",
+        "artist": str(track.get("artist", "")),
+        "track": str(track.get("name", "")),
+        "api_key": LASTFM_API_KEY or "",
+        "format": "json",
+    }
 
     try:
-        # Make a request to the search API
-        search_response = requests.get(search_url)
-        search_response.raise_for_status()  # Raise an exception for HTTP errors
-        search_data = search_response.json()
+        track_info_data = await _request_json(session, params, max_retries=max_retries)
+    except Exception as exc:
+        error_list.append(f"Error fetching detailed info for '{filename}': {exc}")
+        return None
 
-        # Check if any tracks were found
-        if "results" in search_data and "trackmatches" in search_data["results"]:
-            tracks = search_data["results"]["trackmatches"]["track"]
-            if tracks:
-                if not quiet_mode:
-                    print(f"Found {len(tracks)} result(s) for '{song_name}':\n")
-                    for i, track in enumerate(tracks):
-                        print(
-                            f"{i + 1}. Artist: {track['artist']}, Track: {track['name']}"
-                        )
+    track_details = track_info_data.get("track")
+    if not isinstance(track_details, dict):
+        error_list.append(f"Detailed info could not be fetched for {filename}")
+        return None
 
-                if quiet_mode:
-                    track = tracks[0]  # Choose the first result
-                    return fetch_detailed_metadata(track, filename, error_list)
+    artist_data = track_details.get("artist", {})
+    if isinstance(artist_data, dict):
+        artist_name = str(artist_data.get("name", "Unknown"))
+    else:
+        artist_name = str(artist_data or "Unknown")
 
-                choice = int(
-                    input("\nPlease select the track number (or 0 to cancel): ")
-                )
-                if choice == 0:
-                    error_list.append(f"Search cancelled for '{song_name}'.")
-                    return None
-                elif 1 <= choice <= len(tracks):
-                    track = tracks[choice - 1]
-                    return fetch_detailed_metadata(track, filename, error_list)
-                else:
-                    error_list.append(f"Invalid choice for '{song_name}'.")
-                    return None
-            else:
-                error_list.append(f"No matching tracks found for '{song_name}'.")
-                return None
+    album_data = track_details.get("album", {})
+    if isinstance(album_data, dict):
+        album_title = str(album_data.get("title", "Unknown"))
+    else:
+        album_title = str(album_data or "Unknown")
+
+    return {
+        "artist": artist_name,
+        "album": album_title,
+        "track": str(track_details.get("name", "Unknown")),
+        "genre": _extract_genre(track_details),
+        "year": _extract_year(track_details),
+    }
+
+
+async def fetch_metadata_from_lastfm_async(
+    session: aiohttp.ClientSession,
+    parsed: ParsedFilename,
+    quiet_mode: bool = False,
+    filename: str | None = None,
+    error_list: list[str] | None = None,
+    *,
+    interactive_select: bool = False,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+) -> dict | None:
+    if error_list is None:
+        error_list = []
+
+    if not LASTFM_API_KEY:
+        logger.error("missing LASTFM_API_KEY")
+        error_list.append("LASTFM_API_KEY is missing. Add it to your .env file.")
+        return None
+
+    if not quiet_mode:
+        if parsed.artist:
+            logger.info(
+                "searching for song",
+                extra={
+                    "search_title": parsed.search_title,
+                    "artist": parsed.artist,
+                    "raw_filename": parsed.raw_filename,
+                },
+            )
         else:
-            error_list.append(f"No results found for song: '{song_name}'.")
-            return None
+            logger.info(
+                "searching for song",
+                extra={
+                    "search_title": parsed.search_title,
+                    "raw_filename": parsed.raw_filename,
+                },
+            )
 
-    except requests.exceptions.RequestException as e:
-        error_list.append(f"Network error occurred for '{song_name}': {e}")
-        return None
-    except ValueError as e:
-        error_list.append(f"Error decoding the response for '{song_name}': {e}")
-        return None
-    except Exception as e:
-        error_list.append(f"An unexpected error occurred for '{song_name}': {e}")
-        return None
+    params = {
+        "method": "track.search",
+        "track": parsed.search_title,
+        "api_key": LASTFM_API_KEY,
+        "format": "json",
+    }
+    if parsed.artist:
+        params["artist"] = parsed.artist
 
-
-def fetch_detailed_metadata(track, filename=None, error_list=None):
-    """Fetch detailed metadata using track.getInfo."""
-    track_info_url = f'http://ws.audioscrobbler.com/2.0/?method=track.getInfo&artist={track["artist"]}&track={track["name"]}&api_key={LASTFM_API_KEY}&format=json'
     try:
-        # Fetch detailed metadata
-        track_info_response = requests.get(track_info_url)
-        track_info_response.raise_for_status()  # Raise an exception for HTTP errors
-        track_info_data = track_info_response.json()
-
-        if "track" in track_info_data:
-            track_details = track_info_data["track"]
-            # Safely fetch metadata, providing defaults where necessary
-            metadata = {
-                "artist": track_details.get("artist", {}).get("name", "Unknown"),
-                "album": track_details.get("album", {}).get("title", "Unknown"),
-                "track": track_details.get("name", "Unknown"),
-                "genre": (
-                    "Unknown"
-                    if not track_details.get("toptags", {}).get("tag")
-                    else track_details.get("toptags", {})
-                    .get("tag", [{}])[0]
-                    .get("name", "Unknown")
-                ),
-                "year": track_details.get("release_date", "Unknown")[
-                    :4
-                ],  # Extracting the year correctly
-            }
-            return metadata
-        else:
-            error_list.append(f"Detailed info could not be fetched for {filename}")
-            return None
-    except requests.exceptions.RequestException as e:
-        error_list.append(f"Error fetching detailed info for '{filename}': {e}")
-        return None
-    except KeyError as e:
-        error_list.append(f"Missing expected metadata field for '{filename}': {e}")
-        return None
-    except Exception as e:
-        error_list.append(
-            f"An unexpected error occurred while fetching detailed info for '{filename}': {e}"
+        search_data = await _request_json(session, params, max_retries=max_retries)
+    except Exception as exc:
+        logger.error(
+            "network error during search",
+            extra={"raw_filename": parsed.raw_filename},
+            exc_info=True,
         )
+        error_list.append(f"Network error occurred for '{parsed.raw_filename}': {exc}")
         return None
 
+    tracks = _coerce_tracks(search_data)
+    if not tracks:
+        logger.warning("no track matches", extra={"raw_filename": parsed.raw_filename})
+        error_list.append(f"No matching tracks found for '{parsed.raw_filename}'.")
+        return None
 
-def extract_artist_and_title(filename):
-    """Extract the artist and title from the filename using regex and clean up."""
-    # Try to extract artist and title using a common format like "Artist - Title.mp3"
-    match = re.match(r"^(.*?)\s*[-–]\s*(.*?)(\.mp3)$", filename, re.IGNORECASE)
-    if match:
-        artist = match.group(1).strip()
-        title = match.group(2).strip()
+    if not quiet_mode:
+        logger.info(
+            "search results found",
+            extra={"raw_filename": parsed.raw_filename, "result_count": len(tracks)},
+        )
+        for i, track in enumerate(tracks[:10], start=1):
+            artist = track.get("artist", "Unknown")
+            name = track.get("name", "Unknown")
+            logger.debug(
+                "search result candidate",
+                extra={"index": i, "artist": artist, "track": name},
+            )
 
-        # Remove featuring artists and other extraneous details from the title
-        title = re.sub(r"\(feat[^\)]*\)", "", title).strip()  # Remove "(feat. Artist)"
-        title = re.sub(
-            r"\(.*\)", "", title
-        ).strip()  # Remove anything inside parentheses
-        title = re.sub(
-            r"\s+", " ", title
-        )  # Replace multiple spaces with a single space
+    selected_track = tracks[0]
+    if interactive_select and not quiet_mode:
+        try:
+            choice = int(input("\nPlease select the track number (or 0 to cancel): "))
+            if choice == 0:
+                logger.info("search cancelled by user", extra={"raw_filename": parsed.raw_filename})
+                error_list.append(f"Search cancelled for '{parsed.raw_filename}'.")
+                return None
+            if 1 <= choice <= len(tracks):
+                selected_track = tracks[choice - 1]
+            else:
+                logger.warning("invalid search choice", extra={"raw_filename": parsed.raw_filename})
+                error_list.append(f"Invalid choice for '{parsed.raw_filename}'.")
+                return None
+        except ValueError:
+            logger.warning("non-numeric search choice", extra={"raw_filename": parsed.raw_filename})
+            error_list.append(f"Invalid choice for '{parsed.raw_filename}'.")
+            return None
 
-        return artist, title
-    else:
-        return None, filename.replace(".mp3", "").strip()
-
-
-def update_metadata(song_path, metadata):
-    """Update the metadata of the MP3 file using Mutagen."""
-    try:
-        # Load the MP3 file and ensure it has ID3 tags
-        audio = MP3(song_path, ID3=EasyID3)
-
-        # Update metadata fields
-        audio["artist"] = metadata["artist"]
-        audio["album"] = metadata["album"]
-        audio["title"] = metadata["track"]
-        audio["genre"] = metadata["genre"]
-        audio["date"] = metadata["year"]
-
-        # Save changes to the file
-        audio.save()
-        print(f"Metadata updated successfully for '{song_path}'.")
-
-    except Exception as e:
-        print(f"Error updating metadata: {e}")
-
-
-def main():
-    # Ask user for song filename
-    song_filename = input("Enter the filename of the song (with extension): ")
-
-    if not song_filename.strip():
-        print("Error: Filename cannot be empty.")
-        return
-
-    # Extract artist and title from the filename
-    artist, title = extract_artist_and_title(song_filename)
-
-    if artist and title:
-        # If both artist and title are extracted, directly fetch metadata
-        print(f"Artist: {artist}, Title: {title}")
-        metadata = fetch_metadata_from_lastfm(f"{title} {artist}")
-        if metadata:
-            update_metadata(song_filename, metadata)
-    else:
-        # If only title is extracted, prompt the user for multiple results
-        print(f"Only the title '{title}' is extracted, prompting for selection...")
-        metadata = fetch_metadata_from_lastfm(title)
-        if metadata:
-            update_metadata(song_filename, metadata)
-
-
-if __name__ == "__main__":
-    main()
+    return await fetch_detailed_metadata_async(
+        session,
+        selected_track,
+        filename,
+        error_list,
+        max_retries=max_retries,
+    )
