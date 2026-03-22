@@ -8,7 +8,11 @@ LyricLabel is a Python command-line tool for fetching and embedding song metadat
 
 - **Fetch Song Metadata**: Fetch artist, album, genre, and year information using song title and artist from the Last.fm API.
 - **Embed Metadata**: Edit and embed the fetched metadata directly into MP3 files.
-- **Supports Quiet Mode**: Run the program in quiet mode to suppress non-essential output.
+- **Parallel Processing**: Uses `aiohttp` and `asyncio` to fetch metadata for multiple files concurrently.
+- **Regex Filename Parser**: Robustly parses `Artist - Title` and `TrackNo - Title` filename patterns.
+- **Quiet Mode**: Run in quiet mode to suppress non-essential output with `--quiet`.
+- **Dry Run Mode**: Preview what metadata *would* be written to ID3 tags without modifying any files with `--dry-run`.
+- **Structured Logging**: All output goes through a rotating file logger (`logs/lyriclabel.log`) for audit trails on bulk runs.
 - **Process Directories**: Supports processing all MP3 files in a specified directory and its subdirectories.
 - **Error Handling**: Handles various errors, including missing metadata and network issues.
 
@@ -16,140 +20,134 @@ LyricLabel is a Python command-line tool for fetching and embedding song metadat
 
 ## Requirements
 
-To use LyricLabel, you will need:
-
-- Python 3.x
-- `requests` (for fetching metadata from Last.fm)
-- `mutagen` (for editing MP3 metadata)
-- `python-dotenv` (for securely storing your API keys)
-
-Activate virtual .venv:
-
-- Linux/macOS:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-- Windows:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-```
-
-Then install the dependencies using pip
-
-```bash
-pip install -r requirements.txt
-```
+- Python 3.10+
+- Dependencies are declared in `pyproject.toml` and managed via [uv](https://github.com/astral-sh/uv) or pip.
 
 ---
 
 ## Setup
 
-### 1. API Key
+### 1. Clone & create a virtual environment
 
-Before running the program, you need to set up a **Last.fm API Key**.
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```
 
-- Create a `.env` file in the root of the project (do **not** commit this file to your version control).
-- Add your Last.fm API Key in the `.env` file as follows:
+### 2. Install dependencies
+
+Using **uv** (recommended):
+
+```bash
+pip install uv
+uv pip install -e .
+```
+
+Or plain pip:
+
+```bash
+pip install -e .
+```
+
+### 3. API Key
+
+Create a `.env` file in the project root (do **not** commit this file):
 
 ```env
 LASTFM_API_KEY=your_api_key_here
-```
-
-### 2. Install Dependencies
-
-Run the following command to install the required Python libraries:
-
-```bash
-pip install python-dotenv requests mutagen
 ```
 
 ---
 
 ## Usage
 
-You can run the program in the following ways:
-
-### Process a Single File
-
-To process a single MP3 file and embed metadata:
+### Process a single MP3 file
 
 ```bash
-python main.py <path_to_file>
+python main.py path/to/song.mp3
 ```
 
-### Process All MP3 Files in a Directory
-
-To process all MP3 files in a directory:
+### Process all MP3 files in a directory (recursive, concurrent)
 
 ```bash
-python main.py <path_to_directory>
+python main.py path/to/music/folder
 ```
 
-### Quiet Mode
-
-If you want to suppress non-essential output (e.g., prompts or debug information), you can enable **quiet mode** by adding the `--quiet` flag:
+### Quiet mode (auto-selects first result, suppresses prompts)
 
 ```bash
-python main.py <path_to_file_or_directory> --quiet
+python main.py path/to/song.mp3 --quiet
+```
+
+### Dry-run mode (log intended changes without writing to files)
+
+```bash
+python main.py path/to/song.mp3 --dry-run
+```
+
+Combine flags as needed:
+
+```bash
+python main.py path/to/folder --quiet --dry-run
+```
+
+---
+
+## Project Structure
+
+```
+LyricLabel/
+├── main.py                     # Entry point; argument parsing, async orchestration
+├── pyproject.toml              # Project metadata and dependencies (replaces requirements.txt)
+├── .env                        # (user-created, not committed) stores LASTFM_API_KEY
+├── logs/
+│   └── lyriclabel.log          # Rotating audit log (auto-created at runtime)
+└── lyriclabel/
+    ├── __init__.py
+    ├── logger.py               # Centralised RotatingFileHandler + console logger
+    ├── meta_fetcher.py         # Async Last.fm API integration (aiohttp)
+    ├── meta_edit.py            # Mutagen-based ID3 tag writer (supports dry-run)
+    └── utils/
+        ├── __init__.py         # Shared utility helpers (e.g., file validation)
+        └── parser.py           # Regex filename parser (Artist - Title, TrackNo - Title)
 ```
 
 ---
 
 ## How It Works
 
-### `main.py`
-
-- The main script where all file processing begins.
-- It accepts either a file path or a directory path as input.
-- If it's a directory, the script will recursively walk through the folder and process all `.mp3` files.
-
-### `meta_fetcher.py`
-
-- This file contains functions for interacting with the **Last.fm API** to fetch song metadata.
-- `fetch_metadata_from_lastfm`: Retrieves metadata based on the song title and artist.
-- `fetch_detailed_metadata`: Fetches detailed metadata such as genre, year, and album information.
-- **Important**: The Last.fm API key is stored in an environment variable for security.
-
-### `meta_edit.py`
-
-- This file handles the actual editing of the MP3 metadata using **Mutagen**.
-- The `edit_metadata` function embeds the fetched metadata into the MP3 file's ID3 tags (Artist, Title, Album, Genre, Year).
-
-### `utils.py`
-
-- Contains utility functions like checking if a file is valid.
+1. **Input**: The user passes a file path or directory to `main.py`, optionally with `--quiet` and/or `--dry-run`.
+2. **Filename Parsing** (`lyriclabel/utils/parser.py`): Derives artist + title from the filename using regex, handling both `Artist - Title.mp3` and `01 - Title.mp3` formats.
+3. **Async API Lookup** (`lyriclabel/meta_fetcher.py`): Uses `aiohttp` to query Last.fm concurrently across multiple files.
+4. **Tag Writing** (`lyriclabel/meta_edit.py`): Embeds Artist, Title, Album, Genre, and Year into the MP3's ID3 tags. Skips file writes in dry-run mode.
+5. **Logging** (`lyriclabel/logger.py`): All output is routed through a `RotatingFileHandler` (debug+) and a console handler (info+).
 
 ---
 
 ## Error Handling
 
-- **No Matching Tracks**: If no tracks are found based on the song title, the user is informed, and they can decide to continue or cancel.
-- **Detailed Info Fetch Error**: If detailed metadata cannot be fetched, the filename is displayed in the error message, allowing the user to know which file failed.
-- **Network or API Errors**: In case of network errors or API issues, an appropriate message is displayed, and the program continues processing other files.
+- **No Matching Tracks**: Appended to the error list and logged at the end of a run.
+- **Network / API Errors**: Caught per-file so a single failure does not abort the whole batch.
+- **Invalid MP3 Files**: Detected by Mutagen and logged as errors.
 
 ---
 
 ## Contributing
 
-If you want to contribute to the project, feel free to fork the repository, make changes, and submit a pull request. Contributions and suggestions are welcome!
+Fork the repository, make changes, and open a pull request. Contributions and suggestions are welcome!
 
 ---
 
 ## Troubleshooting
 
-- **API Key Error**: Ensure that you have set the `LASTFM_API_KEY` in the `.env` file.
-- **Missing Modules**: Make sure to install the required dependencies using `pip install -r requirements.txt`.
+- **API Key Error**: Ensure `LASTFM_API_KEY` is set in the `.env` file.
+- **Missing Modules**: Run `pip install -e .` from the project root.
+- **Python version**: Python 3.10 or later is required (uses `X | Y` union type hints).
 
 ---
 
 ## Notes
 
 - **Security**: Always keep your API key private. Never commit it to a public repository.
-- **Performance**: If processing a large number of files, it may take some time depending on the number of API requests.
+- **Performance**: Files in a directory are processed concurrently — large collections benefit significantly from async I/O.
 
----

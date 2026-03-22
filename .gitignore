@@ -1,4 +1,12 @@
 /Music/
 .env
-.venv.
+.venv/
 .idea/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+logs/
+.uv/
