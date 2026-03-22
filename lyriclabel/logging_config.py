@@ -10,6 +10,7 @@ _LOGGER_NAMESPACE = "lyriclabel"
 _DEFAULT_LOG_FILENAME = "lyriclabel.log"
 _MAX_BYTES = 5 * 1024 * 1024
 _BACKUP_COUNT = 5
+_STANDARD_RECORD_KEYS = set(logging.makeLogRecord({}).__dict__.keys())
 
 
 class JsonFormatter(logging.Formatter):
@@ -25,6 +26,10 @@ class JsonFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno,
         }
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_RECORD_KEYS or key.startswith("_"):
+                continue
+            payload[key] = value
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False)

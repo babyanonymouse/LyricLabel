@@ -128,6 +128,12 @@ Tune concurrency (default is 5):
 lyriclabel <path_to_file_or_directory> --concurrency 5
 ```
 
+Dry-run preview (no file writes):
+
+```bash
+lyriclabel <path_to_file_or_directory> --dry-run
+```
+
 Override log file location:
 
 ```bash
@@ -179,6 +185,14 @@ uv run mypy .
 - Quiet mode lowers console noise to warnings/errors only, while file logs remain verbose.
 - Default log file location follows XDG state conventions on Linux:
 	- `~/.local/state/lyriclabel/logs/lyriclabel.log`
+- Dry runs emit `[DRY RUN]` per-field delta messages (old -> new) and include structured fields like `dry_run` and `planned_changes` in JSON logs.
+- End-of-run summary includes `would_have_updated` for dry-run auditing.
+
+Example pre-flight report with jq:
+
+```bash
+jq 'select(.dry_run == true and .planned_changes != null) | {file: .file_path, planned_changes: .planned_changes}' ~/.local/state/lyriclabel/logs/lyriclabel.log
+```
 
 ---
 

@@ -1,6 +1,8 @@
 import asyncio
 import argparse
 import os
+from collections import Counter
+from dataclasses import dataclass
 
 from lyriclabel.logging_config import configure_logging, get_logger
 from lyriclabel.meta_edit import edit_metadata
@@ -9,6 +11,12 @@ from lyriclabel.parser import parse_filename
 
 
 logger = get_logger("main")
+
+
+@dataclass(frozen=True)
+class ProcessOutcome:
+    status: str
+    file_path: str
 
 
 def _discover_mp3_files(path: str) -> list[str]:
@@ -29,7 +37,8 @@ async def process_file(
     semaphore: asyncio.Semaphore,
     interactive_select: bool = False,
     session,
-) -> list[str]:
+    dry_run: bool = False,
+) -> ProcessOutcome:
     """Process a single file: fetch metadata and update it."""
     async with semaphore:
         if not quiet_mode:
@@ -55,13 +64,26 @@ async def process_file(
             # Keep the display title from the filename while using cleaned search terms.
             metadata["track"] = parsed.title
             # Mutagen writes are blocking; run on a thread to avoid stalling the event loop.
-            await asyncio.to_thread(edit_metadata, filepath, metadata)
-            if not quiet_mode:
+            write_result = await asyncio.to_thread(
+                edit_metadata,
+                filepath,
+                metadata,
+                dry_run=dry_run,
+            )
+            if write_result.status == "failed":
+                if write_result.message:
+                    error_list.append(f"{filepath}: {write_result.message}")
+                return ProcessOutcome(status="write_failed", file_path=filepath)
+            if write_result.status == "updated" and not quiet_mode:
                 logger.info("metadata updated", extra={"file_path": filepath})
-        elif not quiet_mode:
-            logger.warning("metadata unavailable", extra={"file_path": filepath})
+            if write_result.status == "skipped_dry_run" and not quiet_mode:
+                logger.info("dry-run write skipped", extra={"file_path": filepath})
+            return ProcessOutcome(status=write_result.status, file_path=filepath)
 
-        return error_list
+        if not quiet_mode:
+            logger.warning("metadata unavailable", extra={"file_path": filepath})
+        return ProcessOutcome(status="metadata_unavailable", file_path=filepath)
+
 
 
 async def run_async(
@@ -69,16 +91,22 @@ async def run_async(
     *,
     quiet_mode: bool,
     concurrency: int,
-) -> tuple[int, list[str]]:
+    dry_run: bool,
+) -> tuple[int, list[str], Counter[str]]:
     error_list: list[str] = []
     semaphore = asyncio.Semaphore(concurrency)
+    status_counts: Counter[str] = Counter()
 
     async with create_lastfm_session() as session:
         if os.path.isdir(absolute_path):
             if not quiet_mode:
                 logger.info(
                     "processing directory",
-                    extra={"path": absolute_path, "concurrency": concurrency},
+                    extra={
+                        "path": absolute_path,
+                        "concurrency": concurrency,
+                        "dry_run": dry_run,
+                    },
                 )
 
             file_paths = _discover_mp3_files(absolute_path)
@@ -90,12 +118,13 @@ async def run_async(
                     semaphore=semaphore,
                     interactive_select=False,
                     session=session,
+                    dry_run=dry_run,
                 )
                 for file_path in file_paths
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     error_list.append(
                         f"Unexpected async processing error: {type(result).__name__}: {result}"
                     )
@@ -103,20 +132,24 @@ async def run_async(
                         "unexpected async processing error",
                         exc_info=(type(result), result, result.__traceback__),
                     )
-            return 0, error_list
+                    continue
+                status_counts[result.status] += 1
+            return 0, error_list, status_counts
 
         if os.path.isfile(absolute_path):
-            await process_file(
+            result = await process_file(
                 absolute_path,
                 quiet_mode=quiet_mode,
                 error_list=error_list,
                 semaphore=semaphore,
                 interactive_select=not quiet_mode,
                 session=session,
+                dry_run=dry_run,
             )
-            return 0, error_list
+            status_counts[result.status] += 1
+            return 0, error_list, status_counts
 
-    return 2, [f"The path '{absolute_path}' is not a valid file or directory."]
+    return 2, [f"The path '{absolute_path}' is not a valid file or directory."], status_counts
 
 
 def main() -> int:
@@ -140,10 +173,18 @@ def main() -> int:
         default=None,
         help="Optional path for the rotating log file (JSON lines)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview metadata changes without writing to files",
+    )
     args = parser.parse_args()
 
     log_path = configure_logging(quiet=args.quiet, log_file=args.log_file)
-    logger.info("lyriclabel start", extra={"log_path": str(log_path)})
+    logger.info(
+        "lyriclabel start",
+        extra={"log_path": str(log_path), "dry_run": args.dry_run},
+    )
 
     if args.concurrency < 1:
         logger.error("invalid concurrency value", extra={"value": args.concurrency})
@@ -151,11 +192,12 @@ def main() -> int:
 
     absolute_path = os.path.abspath(args.path)
 
-    status_code, error_list = asyncio.run(
+    status_code, error_list, status_counts = asyncio.run(
         run_async(
             absolute_path,
             quiet_mode=args.quiet,
             concurrency=args.concurrency,
+            dry_run=args.dry_run,
         )
     )
 
@@ -168,5 +210,17 @@ def main() -> int:
         for error in error_list:
             logger.error(error)
 
+    logger.info(
+        "run summary",
+        extra={
+            "dry_run": args.dry_run,
+            "updated": status_counts.get("updated", 0),
+            "would_have_updated": status_counts.get("skipped_dry_run", 0),
+            "no_changes": status_counts.get("no_changes", 0),
+            "metadata_unavailable": status_counts.get("metadata_unavailable", 0),
+            "write_failed": status_counts.get("write_failed", 0),
+            "errors": len(error_list),
+        },
+    )
     logger.info("lyriclabel complete", extra={"errors": len(error_list)})
     return 0
