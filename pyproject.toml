@@ -5,9 +5,9 @@ description = "Fetch and embed Last.fm metadata into MP3 files"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "aiohttp>=3.10.0",
   "mutagen>=1.46.0",
   "python-dotenv>=1.1.0",
-  "requests>=2.28.1",
 ]
 
 [project.scripts]
@@ -17,14 +17,12 @@ lyriclabel = "lyriclabel.main:main"
 dev = [
   "mypy>=1.11.0",
   "ruff>=0.6.0",
-  "types-requests>=2.32.0",
 ]
 
 [dependency-groups]
 dev = [
   "mypy>=1.11.0",
   "ruff>=0.6.0",
-  "types-requests>=2.32.0",
 ]
 
 [build-system]

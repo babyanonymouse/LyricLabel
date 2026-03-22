@@ -19,7 +19,7 @@ LyricLabel is a Python command-line tool for fetching and embedding song metadat
 To use LyricLabel, you will need:
 
 - Python 3.10+
-- `requests` (for fetching metadata from Last.fm)
+- `aiohttp` (for async metadata fetching from Last.fm)
 - `mutagen` (for editing MP3 metadata)
 - `python-dotenv` (for securely storing your API keys)
 
@@ -122,6 +122,12 @@ Quiet mode:
 lyriclabel <path_to_file_or_directory> --quiet
 ```
 
+Tune concurrency (default is 5):
+
+```bash
+lyriclabel <path_to_file_or_directory> --concurrency 5
+```
+
 ### Process a Single File
 
 To process a single MP3 file and embed metadata:
@@ -173,9 +179,10 @@ uv run mypy .
 ### `meta_fetcher.py`
 
 - This file contains functions for interacting with the **Last.fm API** to fetch song metadata.
-- `fetch_metadata_from_lastfm`: Retrieves metadata based on the song title and artist.
-- `fetch_detailed_metadata`: Fetches detailed metadata such as genre, year, and album information.
+- `fetch_metadata_from_lastfm_async`: Retrieves metadata based on the song title and artist.
+- `fetch_detailed_metadata_async`: Fetches detailed metadata such as genre, year, and album information.
 - **Important**: The Last.fm API key is stored in an environment variable for security.
+- Uses one shared `aiohttp` session per run, with retries and 429-aware backoff.
 
 ### `meta_edit.py`
 
@@ -214,5 +221,6 @@ If you want to contribute to the project, feel free to fork the repository, make
 
 - **Security**: Always keep your API key private. Never commit it to a public repository.
 - **Performance**: If processing a large number of files, it may take some time depending on the number of API requests.
+- **Concurrency**: Lower `--concurrency` if you hit API rate limits or run on a constrained network.
 
 ---
