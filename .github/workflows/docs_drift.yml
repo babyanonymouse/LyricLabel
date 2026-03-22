@@ -1,0 +1,36 @@
+name: Documentation Drift Check
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for Code changes without Doc changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          fi
+
+          # Handle repository bootstrap where event.before can be all zeros.
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git rev-list --max-parents=0 "$HEAD_SHA")"
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          CODE_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^(lyriclabel/|main\.py$)" || true)
+          DOC_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^(docs/|README\.md$)" || true)
+
+          if [ -n "$CODE_CHANGES" ] && [ -z "$DOC_CHANGES" ]; then
+            echo "::warning ::Core logic changed (lyriclabel/ or main.py) without documentation updates (docs/ or README.md). Please sync docs."
+          fi
