@@ -18,7 +18,7 @@ LyricLabel is a Python command-line tool for fetching and embedding song metadat
 
 To use LyricLabel, you will need:
 
-- Python 3.10+
+- Python 3.11+
 - `aiohttp` (for async metadata fetching from Last.fm)
 - `mutagen` (for editing MP3 metadata)
 - `python-dotenv` (for securely storing your API keys)
@@ -87,12 +87,28 @@ pip install -e .
 
 Before running the program, you need to set up a **Last.fm API Key**.
 
-- Create a `.env` file in the root of the project (do **not** commit this file to your version control).
-- Add your Last.fm API Key in the `.env` file as follows:
+- You can provide the key from either `.env` or `config.toml`.
+- Precedence is: `CLI flags > environment variables > config.toml > defaults`.
+
+Option A: `.env` in project root (do **not** commit this file):
 
 ```env
 LASTFM_API_KEY=your_api_key_here
 ```
+
+Option B: XDG config file (`~/.config/lyriclabel/config.toml` by default on Linux):
+
+```toml
+[lyriclabel]
+lastfm_api_key = "your_api_key_here"
+quiet = false
+concurrency = 5
+dry_run = false
+```
+
+Security note (Linux):
+- The app checks config permissions and warns if they are too broad.
+- If needed, it attempts to tighten permissions to `600` automatically.
 
 ### 2. Install Dependencies
 
@@ -138,6 +154,12 @@ Override log file location:
 
 ```bash
 lyriclabel <path_to_file_or_directory> --log-file /tmp/lyriclabel.log
+```
+
+Override config file location:
+
+```bash
+lyriclabel <path_to_file_or_directory> --config ~/.config/lyriclabel/config.toml
 ```
 
 ### Process a Single File
@@ -239,7 +261,7 @@ If you want to contribute to the project, feel free to fork the repository, make
 
 ## Troubleshooting
 
-- **API Key Error**: Ensure that you have set the `LASTFM_API_KEY` in the `.env` file.
+- **API Key Error**: Ensure `LASTFM_API_KEY` is set in env or `lastfm_api_key` is present in `config.toml`.
 - **Missing Modules**: Make sure dependencies are installed with `uv sync` (or `pip install -e .`).
 - **VS Code Interpreter**: On Ubuntu and other Linux systems, point VS Code to `.venv/bin/python` created by `uv venv` for correct IntelliSense and imports.
 

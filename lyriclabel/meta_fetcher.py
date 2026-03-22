@@ -1,19 +1,14 @@
 import asyncio
-import os
 import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
 import aiohttp
-from dotenv import load_dotenv
 
 from lyriclabel.logging_config import get_logger
 from lyriclabel.parser import ParsedFilename
 
-load_dotenv()
-
-LASTFM_API_KEY = os.getenv("LASTFM_API_KEY")
 LASTFM_BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 DEFAULT_USER_AGENT = "LyricLabel/0.1 (+https://codex.atlassian.net)"
 DEFAULT_TIMEOUT_SECONDS = 20
@@ -69,7 +64,7 @@ async def _request_json(
                 if not isinstance(payload, dict):
                     raise ValueError("Unexpected non-dict JSON payload from Last.fm")
                 return cast(dict[str, Any], payload)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        except (aiohttp.ClientError, TimeoutError, ValueError):
             if attempt >= max_retries:
                 raise
             logger.warning("request failed, retrying", extra={"attempt": attempt + 1})
@@ -112,6 +107,7 @@ def _extract_genre(track_details: dict) -> str:
 
 async def fetch_detailed_metadata_async(
     session: aiohttp.ClientSession,
+    api_key: str,
     track: dict,
     filename: str | None = None,
     error_list: list[str] | None = None,
@@ -125,7 +121,7 @@ async def fetch_detailed_metadata_async(
         "method": "track.getInfo",
         "artist": str(track.get("artist", "")),
         "track": str(track.get("name", "")),
-        "api_key": LASTFM_API_KEY or "",
+        "api_key": api_key,
         "format": "json",
     }
 
@@ -163,6 +159,7 @@ async def fetch_detailed_metadata_async(
 
 async def fetch_metadata_from_lastfm_async(
     session: aiohttp.ClientSession,
+    api_key: str,
     parsed: ParsedFilename,
     quiet_mode: bool = False,
     filename: str | None = None,
@@ -174,9 +171,11 @@ async def fetch_metadata_from_lastfm_async(
     if error_list is None:
         error_list = []
 
-    if not LASTFM_API_KEY:
+    if not api_key:
         logger.error("missing LASTFM_API_KEY")
-        error_list.append("LASTFM_API_KEY is missing. Add it to your .env file.")
+        error_list.append(
+            "LASTFM_API_KEY is missing. Add it to your environment or config.toml."
+        )
         return None
 
     if not quiet_mode:
@@ -201,7 +200,7 @@ async def fetch_metadata_from_lastfm_async(
     params = {
         "method": "track.search",
         "track": parsed.search_title,
-        "api_key": LASTFM_API_KEY,
+        "api_key": api_key,
         "format": "json",
     }
     if parsed.artist:
@@ -258,6 +257,7 @@ async def fetch_metadata_from_lastfm_async(
 
     return await fetch_detailed_metadata_async(
         session,
+        api_key,
         selected_track,
         filename,
         error_list,
