@@ -2,6 +2,11 @@ from mutagen.mp3 import MP3
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON, TDRC
 import mutagen.mp3
 
+from lyriclabel.logging_config import get_logger
+
+
+logger = get_logger("editor")
+
 
 def edit_metadata(filepath, metadata):
     try:
@@ -22,8 +27,13 @@ def edit_metadata(filepath, metadata):
 
         # Save changes
         audio.save()
+        logger.info("metadata write complete", extra={"file_path": filepath})
 
     except mutagen.mp3.HeaderNotFoundError:
-        print(f"Invalid MP3 file: {filepath}")
-    except Exception as e:
-        print(f"Error updating metadata for '{filepath}': {e}")
+        logger.error("invalid mp3 file", extra={"file_path": filepath}, exc_info=True)
+    except Exception:
+        logger.error(
+            "metadata write failed",
+            extra={"file_path": filepath},
+            exc_info=True,
+        )

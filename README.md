@@ -128,6 +128,12 @@ Tune concurrency (default is 5):
 lyriclabel <path_to_file_or_directory> --concurrency 5
 ```
 
+Override log file location:
+
+```bash
+lyriclabel <path_to_file_or_directory> --log-file /tmp/lyriclabel.log
+```
+
 ### Process a Single File
 
 To process a single MP3 file and embed metadata:
@@ -165,6 +171,14 @@ Run type checks:
 ```bash
 uv run mypy .
 ```
+
+### Logging
+
+- Console logs are human-readable.
+- File logs are JSON lines for easy post-run analysis (`jq`, grep, etc.).
+- Quiet mode lowers console noise to warnings/errors only, while file logs remain verbose.
+- Default log file location follows XDG state conventions on Linux:
+	- `~/.local/state/lyriclabel/logs/lyriclabel.log`
 
 ---
 
@@ -222,5 +236,6 @@ If you want to contribute to the project, feel free to fork the repository, make
 - **Security**: Always keep your API key private. Never commit it to a public repository.
 - **Performance**: If processing a large number of files, it may take some time depending on the number of API requests.
 - **Concurrency**: Lower `--concurrency` if you hit API rate limits or run on a constrained network.
+- **Logs**: Inspect JSON logs to audit retries, rate limits, and per-file failures.
 
 ---

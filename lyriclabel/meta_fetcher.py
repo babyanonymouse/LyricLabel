@@ -8,6 +8,7 @@ from typing import Any, cast
 import aiohttp
 from dotenv import load_dotenv
 
+from lyriclabel.logging_config import get_logger
 from lyriclabel.parser import ParsedFilename
 
 load_dotenv()
@@ -17,6 +18,8 @@ LASTFM_BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 DEFAULT_USER_AGENT = "LyricLabel/0.1 (+https://codex.atlassian.net)"
 DEFAULT_TIMEOUT_SECONDS = 20
 DEFAULT_MAX_RETRIES = 4
+
+logger = get_logger("fetcher")
 
 
 @asynccontextmanager
@@ -46,10 +49,18 @@ async def _request_json(
                     else:
                         # Exponential backoff with jitter for rate limit bursts.
                         sleep_seconds = (2 ** attempt) + random.uniform(0, 0.25)
+                    logger.warning(
+                        "lastfm rate limited, backing off",
+                        extra={"attempt": attempt + 1, "sleep_seconds": sleep_seconds},
+                    )
                     await asyncio.sleep(sleep_seconds)
                     continue
 
                 if response.status >= 500 and attempt < max_retries:
+                    logger.warning(
+                        "lastfm server error, retrying",
+                        extra={"status": response.status, "attempt": attempt + 1},
+                    )
                     await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.25))
                     continue
 
@@ -61,6 +72,7 @@ async def _request_json(
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             if attempt >= max_retries:
                 raise
+            logger.warning("request failed, retrying", extra={"attempt": attempt + 1})
             await asyncio.sleep((2 ** attempt) + random.uniform(0, 0.25))
 
     raise RuntimeError("Failed to get JSON response from Last.fm")
@@ -163,16 +175,28 @@ async def fetch_metadata_from_lastfm_async(
         error_list = []
 
     if not LASTFM_API_KEY:
+        logger.error("missing LASTFM_API_KEY")
         error_list.append("LASTFM_API_KEY is missing. Add it to your .env file.")
         return None
 
     if not quiet_mode:
         if parsed.artist:
-            print(
-                f"Searching for song: {parsed.search_title} (artist hint: {parsed.artist})"
+            logger.info(
+                "searching for song",
+                extra={
+                    "search_title": parsed.search_title,
+                    "artist": parsed.artist,
+                    "raw_filename": parsed.raw_filename,
+                },
             )
         else:
-            print(f"Searching for song: {parsed.search_title}")
+            logger.info(
+                "searching for song",
+                extra={
+                    "search_title": parsed.search_title,
+                    "raw_filename": parsed.raw_filename,
+                },
+            )
 
     params = {
         "method": "track.search",
@@ -186,34 +210,49 @@ async def fetch_metadata_from_lastfm_async(
     try:
         search_data = await _request_json(session, params, max_retries=max_retries)
     except Exception as exc:
+        logger.error(
+            "network error during search",
+            extra={"raw_filename": parsed.raw_filename},
+            exc_info=True,
+        )
         error_list.append(f"Network error occurred for '{parsed.raw_filename}': {exc}")
         return None
 
     tracks = _coerce_tracks(search_data)
     if not tracks:
+        logger.warning("no track matches", extra={"raw_filename": parsed.raw_filename})
         error_list.append(f"No matching tracks found for '{parsed.raw_filename}'.")
         return None
 
     if not quiet_mode:
-        print(f"Found {len(tracks)} result(s) for '{parsed.raw_filename}':\n")
+        logger.info(
+            "search results found",
+            extra={"raw_filename": parsed.raw_filename, "result_count": len(tracks)},
+        )
         for i, track in enumerate(tracks[:10], start=1):
             artist = track.get("artist", "Unknown")
             name = track.get("name", "Unknown")
-            print(f"{i}. Artist: {artist}, Track: {name}")
+            logger.debug(
+                "search result candidate",
+                extra={"index": i, "artist": artist, "track": name},
+            )
 
     selected_track = tracks[0]
     if interactive_select and not quiet_mode:
         try:
             choice = int(input("\nPlease select the track number (or 0 to cancel): "))
             if choice == 0:
+                logger.info("search cancelled by user", extra={"raw_filename": parsed.raw_filename})
                 error_list.append(f"Search cancelled for '{parsed.raw_filename}'.")
                 return None
             if 1 <= choice <= len(tracks):
                 selected_track = tracks[choice - 1]
             else:
+                logger.warning("invalid search choice", extra={"raw_filename": parsed.raw_filename})
                 error_list.append(f"Invalid choice for '{parsed.raw_filename}'.")
                 return None
         except ValueError:
+            logger.warning("non-numeric search choice", extra={"raw_filename": parsed.raw_filename})
             error_list.append(f"Invalid choice for '{parsed.raw_filename}'.")
             return None
 

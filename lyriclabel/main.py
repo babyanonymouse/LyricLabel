@@ -2,9 +2,13 @@ import asyncio
 import argparse
 import os
 
+from lyriclabel.logging_config import configure_logging, get_logger
 from lyriclabel.meta_edit import edit_metadata
 from lyriclabel.meta_fetcher import create_lastfm_session, fetch_metadata_from_lastfm_async
 from lyriclabel.parser import parse_filename
+
+
+logger = get_logger("main")
 
 
 def _discover_mp3_files(path: str) -> list[str]:
@@ -29,7 +33,7 @@ async def process_file(
     """Process a single file: fetch metadata and update it."""
     async with semaphore:
         if not quiet_mode:
-            print(f"Processing file: {filepath}")
+            logger.info("processing file", extra={"file_path": filepath})
 
         # Extract title from the filename (we only need the basename).
         filename = os.path.basename(filepath)
@@ -53,9 +57,9 @@ async def process_file(
             # Mutagen writes are blocking; run on a thread to avoid stalling the event loop.
             await asyncio.to_thread(edit_metadata, filepath, metadata)
             if not quiet_mode:
-                print(f"Metadata successfully added to '{filepath}'.")
+                logger.info("metadata updated", extra={"file_path": filepath})
         elif not quiet_mode:
-            print(f"Metadata could not be fetched for '{filepath}'.")
+            logger.warning("metadata unavailable", extra={"file_path": filepath})
 
         return error_list
 
@@ -72,7 +76,10 @@ async def run_async(
     async with create_lastfm_session() as session:
         if os.path.isdir(absolute_path):
             if not quiet_mode:
-                print(f"Processing all mp3 files in directory: {absolute_path}")
+                logger.info(
+                    "processing directory",
+                    extra={"path": absolute_path, "concurrency": concurrency},
+                )
 
             file_paths = _discover_mp3_files(absolute_path)
             tasks = [
@@ -91,6 +98,10 @@ async def run_async(
                 if isinstance(result, Exception):
                     error_list.append(
                         f"Unexpected async processing error: {type(result).__name__}: {result}"
+                    )
+                    logger.error(
+                        "unexpected async processing error",
+                        exc_info=(type(result), result, result.__traceback__),
                     )
             return 0, error_list
 
@@ -124,10 +135,18 @@ def main() -> int:
         default=5,
         help="Maximum number of files to process concurrently (default: 5)",
     )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Optional path for the rotating log file (JSON lines)",
+    )
     args = parser.parse_args()
 
+    log_path = configure_logging(quiet=args.quiet, log_file=args.log_file)
+    logger.info("lyriclabel start", extra={"log_path": str(log_path)})
+
     if args.concurrency < 1:
-        print("--concurrency must be at least 1")
+        logger.error("invalid concurrency value", extra={"value": args.concurrency})
         return 2
 
     absolute_path = os.path.abspath(args.path)
@@ -141,12 +160,13 @@ def main() -> int:
     )
 
     if status_code == 2:
-        print(error_list[0])
+        logger.error(error_list[0])
         return 2
 
     if error_list:
-        print("\nErrors during processing:")
+        logger.warning("errors encountered during processing")
         for error in error_list:
-            print(f"- {error}")
+            logger.error(error)
 
+    logger.info("lyriclabel complete", extra={"errors": len(error_list)})
     return 0
